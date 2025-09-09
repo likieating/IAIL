@@ -1,0 +1,493 @@
+'''
+# author: Zhiyuan Yan
+# email: zhiyuanyan@link.cuhk.edu.cn
+# date: 2023-0706
+# description: Class for the UCFDetector
+
+Functions in the Class are summarized as:
+1. __init__: Initialization
+2. build_backbone: Backbone-building
+3. build_loss: Loss-function-building
+4. features: Feature-extraction
+5. classifier: Classification
+6. get_losses: Loss-computation
+7. get_train_metrics: Training-metrics-computation
+8. get_test_metrics: Testing-metrics-computation
+9. forward: Forward-propagation
+
+Reference:
+@article{yan2023ucf,
+  title={UCF: Uncovering Common Features for Generalizable Deepfake Detection},
+  author={Yan, Zhiyuan and Zhang, Yong and Fan, Yanbo and Wu, Baoyuan},
+  journal={arXiv preprint arXiv:2304.13949},
+  year={2023}
+}
+'''
+
+import logging
+import random
+
+from models.identity.loss.supConLoss import SupConLoss
+import torch
+import torch.nn as nn
+from .xception import Block, SeparableConv2d
+
+from models.identity.basic_metric_class import calculate_metrics_for_train
+from models.identity.loss.ucfloss import CrossEntropyLoss, L1Loss, ContrastiveLoss
+from models.identity.base_detector import AbstractDetector
+# from detectors import DETECTOR
+# from networks import BACKBONE
+# from models.identity.metrics.registry import LOSSFUNC
+
+logger = logging.getLogger(__name__)
+
+class Xception(nn.Module):
+    """
+    Xception optimized for the ImageNet dataset, as specified in
+    https://arxiv.org/pdf/1610.02357.pdf
+    """
+
+    def __init__(self):
+        """ Constructor
+        Args:
+            xception_config: configuration file with the dict format
+        """
+        super(Xception, self).__init__()
+        self.num_classes = 2
+        # self.mode = 'adjust_channel'
+        inc = 3
+        dropout = False
+
+        # Entry flow
+        self.conv1 = nn.Conv2d(inc, 32, 3, 2, 0, bias=False)
+
+        self.bn1 = nn.BatchNorm2d(32)
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv2 = nn.Conv2d(32, 64, 3, bias=False)
+        self.bn2 = nn.BatchNorm2d(64)
+        # do relu here
+
+        self.block1 = Block(
+            64, 128, 2, 2, start_with_relu=False, grow_first=True)
+        self.block2 = Block(
+            128, 256, 2, 2, start_with_relu=True, grow_first=True)
+        self.block3 = Block(
+            256, 728, 2, 2, start_with_relu=True, grow_first=True)
+
+        # middle flow
+        self.block4 = Block(
+            728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block5 = Block(
+            728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block6 = Block(
+            728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block7 = Block(
+            728, 728, 3, 1, start_with_relu=True, grow_first=True)
+
+        self.block8 = Block(
+            728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block9 = Block(
+            728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block10 = Block(
+            728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block11 = Block(
+            728, 728, 3, 1, start_with_relu=True, grow_first=True)
+
+        # Exit flow
+        self.block12 = Block(
+            728, 1024, 2, 2, start_with_relu=True, grow_first=False)
+
+        self.conv3 = SeparableConv2d(1024, 1536, 3, 1, 1)
+        self.bn3 = nn.BatchNorm2d(1536)
+
+        # do relu here
+        self.conv4 = SeparableConv2d(1536, 2048, 3, 1, 1)
+        self.bn4 = nn.BatchNorm2d(2048)
+        # used for iid
+
+        self.conv5 = nn.Conv2d(2048, 512, 1, 1)
+        self.bn5 = nn.BatchNorm2d(512)
+
+    def features(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x)
+        x = self.block4(x)
+        x = self.block5(x)
+        x = self.block6(x)
+        x = self.block7(x)
+        x = self.block8(x)
+        x = self.block9(x)
+        x = self.block10(x)
+        x = self.block11(x)
+        x = self.block12(x)
+        x = self.conv3(x)
+        x = self.bn3(x)
+        x = self.relu(x)
+
+        x = self.conv4(x)
+        x = self.bn4(x)
+        x = self.relu(x)
+
+        x = self.conv5(x)
+        x = self.bn5(x)
+
+        return x
+
+
+# @DETECTOR.register_module(module_name='ucf')
+class UCFDetector(AbstractDetector):
+    def __init__(self):
+        super().__init__()
+        self.num_classes = 2
+        self.encoder_feat_dim = 512
+
+        self.encoder_f = self.build_backbone()
+        self.encoder_c = self.build_backbone()
+
+        self.loss_func = self.build_loss()
+        self.prob, self.label = [], []
+        self.correct, self.total = 0, 0
+
+        # conditional gan
+        self.con_gan = Conditional_UNet()
+
+        # head
+        self.head_sha = Head(
+            in_f=self.encoder_feat_dim,
+            hidden_dim=self.encoder_feat_dim,
+            out_f=self.num_classes
+        )
+
+    def build_backbone(self):
+        # prepare the backbone
+        backbone = Xception()
+        # if donot load the pretrained weights, fail to get good results
+        state_dict = torch.load('/home/tangshuai/dmp-bk/pre_weights/xception-b5690688.pth')
+        for name, weights in state_dict.items():
+            if 'pointwise' in name:
+                state_dict[name] = weights.unsqueeze(-1).unsqueeze(-1)
+        state_dict = {k: v for k, v in state_dict.items() if 'fc' not in k}
+        backbone.load_state_dict(state_dict, False)
+        logger.info('Load pretrained model successfully!')
+        return backbone
+
+    def build_loss(self):
+        cls_loss_class = CrossEntropyLoss
+        con_loss_class = ContrastiveLoss
+        rec_loss_class = L1Loss
+        cls_loss_func = cls_loss_class()
+        con_loss_func = con_loss_class(margin=3.0)
+        rec_loss_func = rec_loss_class()
+        loss_func = {
+            'cls': cls_loss_func,
+            'con': con_loss_func,
+            'rec': rec_loss_func,
+        }
+        return loss_func
+
+    def features(self, data_dict: dict) -> torch.tensor:
+        cat_data = data_dict['image']
+        # encoder
+        f_all = self.encoder_f.features(cat_data)
+        c_all = self.encoder_c.features(cat_data)
+        feat_dict = {'forgery': f_all, 'content': c_all}
+        return feat_dict
+
+    def get_losses(self, data_dict: dict, pred_dict: dict,) -> dict:
+        if 'label_spe' in data_dict and 'recontruction_imgs' in pred_dict:
+            return self.get_train_losses(data_dict, pred_dict)
+        else:  # test mode
+            return self.get_test_losses(data_dict, pred_dict)
+
+    def get_train_losses(self, data_dict: dict, pred_dict: dict) -> dict:
+        # get combined, real, fake imgs
+        cat_data = data_dict['image']
+        real_img, fake_img = cat_data.chunk(2, dim=0)
+        # get the reconstruction imgs
+        reconstruction_image_1, \
+            reconstruction_image_2, \
+            self_reconstruction_image_1, \
+            self_reconstruction_image_2 \
+            = pred_dict['recontruction_imgs']
+        # get label
+        label = data_dict['label']
+        # get pred
+        pred = pred_dict['cls']
+
+        # 1. classification loss for common features
+        loss_sha = self.loss_func['cls'](pred, label)
+
+        # 2. reconstruction loss
+        self_loss_reconstruction_1 = self.loss_func['rec'](fake_img, self_reconstruction_image_1)
+        self_loss_reconstruction_2 = self.loss_func['rec'](real_img, self_reconstruction_image_2)
+        cross_loss_reconstruction_1 = self.loss_func['rec'](fake_img, reconstruction_image_2)
+        cross_loss_reconstruction_2 = self.loss_func['rec'](real_img, reconstruction_image_1)
+        loss_reconstruction = \
+            self_loss_reconstruction_1 + self_loss_reconstruction_2 + \
+            cross_loss_reconstruction_1 + cross_loss_reconstruction_2
+
+        # 4. constrative loss
+        common_features = pred_dict['feat']
+        content_features = pred_dict['feat_content']
+        loss_con = self.loss_func['con'](common_features, content_features, label)
+
+        # 5. total loss
+        loss_dict = {
+            'common': loss_sha,
+            'reconstruction': loss_reconstruction,
+            'contrastive': loss_con,
+        }
+        return loss_dict
+
+    def get_test_losses(self, data_dict: dict, pred_dict: dict) -> dict:
+        # get label
+        label = data_dict['label']
+        # get pred
+        pred = pred_dict['cls']
+        # for test mode, only classification loss for common features
+        loss = self.loss_func['cls'](pred, label)
+        loss_dict = {'common': loss}
+        return loss_dict
+
+    def classifier(self, features: torch.tensor) -> torch.tensor:
+        pass
+
+    def get_train_metrics(self, data_dict: dict, pred_dict: dict) -> dict:
+        pass
+
+    def forward(self, data_dict: dict, inference=False) -> dict:
+        # split the features into the content and forgery
+        features = self.features(data_dict)
+        forgery_features, content_features = features['forgery'], features['content']
+        # get the prediction by classifier (split the common and specific forgery)
+
+        if inference:
+            # inference only consider share loss
+            out_sha, sha_feat = self.head_sha(forgery_features)
+            prob_sha = torch.softmax(out_sha, dim=1)[:, 1]
+            self.prob.append(
+                prob_sha
+                .detach()
+                .squeeze()
+                .cpu()
+                .numpy()
+            )
+            self.label.append(
+                data_dict['label']
+                .detach()
+                .squeeze()
+                .cpu()
+                .numpy()
+            )
+            # deal with acc
+            _, prediction_class = torch.max(out_sha, 1)
+            common_label = (data_dict['label'] >= 1)
+            correct = (prediction_class == common_label).sum().item()
+            self.correct += correct
+            self.total += data_dict['label'].size(0)
+
+            pred_dict = {'cls': out_sha, 'feat': sha_feat}
+            return pred_dict
+
+        bs = forgery_features.size(0)
+        # using idx aug in the training mode
+        aug_idx = random.random()
+        if aug_idx < 0.7:
+            # real
+            idx_list = list(range(0, bs // 2))
+            random.shuffle(idx_list)
+            forgery_features[0: bs // 2] = forgery_features[idx_list]
+            # fake
+            idx_list = list(range(bs // 2, bs))
+            random.shuffle(idx_list)
+            forgery_features[bs // 2: bs] = forgery_features[idx_list]
+
+        # concat spe and share to obtain new_f_all
+
+        # reconstruction loss
+        f2, f1 = forgery_features.chunk(2, dim=0)
+        c2, c1 = content_features.chunk(2, dim=0)
+
+        # ==== self reconstruction ==== #
+        # f1 + c1 -> f11, f11 + c1 -> near~I1
+        self_reconstruction_image_1 = self.con_gan(f1, c1)
+
+        # f2 + c2 -> f2, f2 + c2 -> near~I2
+        self_reconstruction_image_2 = self.con_gan(f2, c2)
+
+        # ==== cross combine ==== #
+        reconstruction_image_1 = self.con_gan(f1, c2)
+        reconstruction_image_2 = self.con_gan(f2, c1)
+
+        # head for spe and sha
+        out_sha, sha_feat = self.head_sha(forgery_features)
+
+        # get the probability of the pred
+        prob_sha = torch.softmax(out_sha, dim=1)[:, 1]
+
+        # build the prediction dict for each output
+        pred_dict = {
+            'cls': out_sha,
+            'prob': prob_sha,
+            'feat': sha_feat,
+            'feat_content': content_features,
+            'recontruction_imgs': (
+                reconstruction_image_1,
+                reconstruction_image_2,
+                self_reconstruction_image_1,
+                self_reconstruction_image_2
+            )
+        }
+        return pred_dict
+
+
+def r_double_conv(in_channels, out_channels):
+    return nn.Sequential(
+        nn.Conv2d(in_channels, out_channels, 3, padding=1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(out_channels, out_channels, 3, padding=1),
+        nn.ReLU(inplace=True)
+    )
+
+
+class AdaIN(nn.Module):
+    def __init__(self, eps=1e-5):
+        super().__init__()
+        self.eps = eps
+        # self.l1 = nn.Linear(num_classes, in_channel*4, bias=True) #bias is good :)
+
+    def c_norm(self, x, bs, ch, eps=1e-7):
+        # assert isinstance(x, torch.cuda.FloatTensor)
+        x_var = x.var(dim=-1) + eps
+        x_std = x_var.sqrt().view(bs, ch, 1, 1)
+        x_mean = x.mean(dim=-1).view(bs, ch, 1, 1)
+        return x_std, x_mean
+
+    def forward(self, x, y):
+        assert x.size(0) == y.size(0)
+        size = x.size()
+        bs, ch = size[:2]
+        x_ = x.view(bs, ch, -1)
+        y_ = y.reshape(bs, ch, -1)
+        x_std, x_mean = self.c_norm(x_, bs, ch, eps=self.eps)
+        y_std, y_mean = self.c_norm(y_, bs, ch, eps=self.eps)
+        out = ((x - x_mean.expand(size)) / x_std.expand(size)) \
+              * y_std.expand(size) + y_mean.expand(size)
+        return out
+
+
+class Conditional_UNet(nn.Module):
+
+    def init_weight(self, std=0.2):
+        for m in self.modules():
+            cn = m.__class__.__name__
+            if cn.find('Conv') != -1:
+                m.weight.data.normal_(0., std)
+            elif cn.find('Linear') != -1:
+                m.weight.data.normal_(1., std)
+                m.bias.data.fill_(0)
+
+    def __init__(self):
+        super(Conditional_UNet, self).__init__()
+
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.maxpool = nn.MaxPool2d(2)
+        self.dropout = nn.Dropout(p=0.4)
+        # self.dropout_half = HalfDropout(p=0.3)
+
+        self.adain3 = AdaIN()
+        self.adain2 = AdaIN()
+        self.adain1 = AdaIN()
+
+        self.dconv_up3 = r_double_conv(512, 256)
+        self.dconv_up2 = r_double_conv(256, 128)
+        self.dconv_up1 = r_double_conv(128, 64)
+
+        self.conv_last = nn.Conv2d(64, 3, 1)
+        self.up_last = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True)
+        self.activation = nn.Tanh()
+        # self.init_weight()
+
+    def forward(self, c, x):  # c is the style and x is the content
+        x = self.adain3(x, c)
+        x = self.upsample(x)
+        x = self.dropout(x)
+        x = self.dconv_up3(x)
+        c = self.upsample(c)
+        c = self.dropout(c)
+        c = self.dconv_up3(c)
+
+        x = self.adain2(x, c)
+        x = self.upsample(x)
+        x = self.dropout(x)
+        x = self.dconv_up2(x)
+        c = self.upsample(c)
+        c = self.dropout(c)
+        c = self.dconv_up2(c)
+
+        x = self.adain1(x, c)
+        x = self.upsample(x)
+        x = self.dropout(x)
+        x = self.dconv_up1(x)
+
+        x = self.conv_last(x)
+        out = self.up_last(x)
+
+        return self.activation(out)
+
+
+class MLP(nn.Module):
+    def __init__(self, in_f, hidden_dim, out_f):
+        super(MLP, self).__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.mlp = nn.Sequential(nn.Linear(in_f, hidden_dim),
+                                 nn.LeakyReLU(inplace=True),
+                                 nn.Linear(hidden_dim, hidden_dim),
+                                 nn.LeakyReLU(inplace=True),
+                                 nn.Linear(hidden_dim, out_f), )
+
+    def forward(self, x):
+        x = self.pool(x)
+        x = self.mlp(x)
+        return x
+
+
+class Conv2d1x1(nn.Module):
+    def __init__(self, in_f, hidden_dim, out_f):
+        super(Conv2d1x1, self).__init__()
+        self.conv2d = nn.Sequential(nn.Conv2d(in_f, hidden_dim, 1, 1),
+                                    nn.LeakyReLU(inplace=True),
+                                    nn.Conv2d(hidden_dim, hidden_dim, 1, 1),
+                                    nn.LeakyReLU(inplace=True),
+                                    nn.Conv2d(hidden_dim, out_f, 1, 1), )
+
+    def forward(self, x):
+        x = self.conv2d(x)
+        return x
+
+
+class Head(nn.Module):
+    def __init__(self, in_f, hidden_dim, out_f):
+        super(Head, self).__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.mlp = nn.Linear(in_f, hidden_dim)
+        self.mlp2 = nn.Linear(hidden_dim, out_f)
+        self.dropout = nn.Dropout(0.2)
+
+    def forward(self, x):
+        bs = x.size()[0]
+        x_feat = self.pool(x).view(bs, -1)
+        x = self.mlp(x_feat)
+        x = self.mlp2(x)
+        x = self.dropout(x)
+        return x, x_feat
