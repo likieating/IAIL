@@ -1,0 +1,15 @@
+{
+    "prefix": "reproduce",
+    "dataset": "OSMA",
+    "memory_size": 1000,
+    "memory_per_class": 200,
+    "fixed_memory": false,
+    "shuffle": false,
+    "init_cls": 1,
+    "increment": 1,
+    "model_name": "dmp",
+    "convnet_type": "resnet34",
+    "device": ["0"],
+    "seed": [1993],
+    "resize_size": 299
+}

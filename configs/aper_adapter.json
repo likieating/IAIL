@@ -1,0 +1,24 @@
+{
+    "prefix": "reproduce",
+    "dataset": "OSMA",
+    "memory_size": 1000,
+    "memory_per_class": 200,
+    "fixed_memory": false,
+    "shuffle": false,
+    "init_cls": 1,
+    "increment": 1,
+    "model_name": "dfil",
+    "convnet_type": "pretrained_vit_b16_224_in21k_adapter",
+    "device": ["3"],
+    "seed": [1993],
+    "resize_size": 224,
+    "ffn_num": 64,
+    "batch_size": 64,
+    "init_lr": 1e-2,
+    "weight_decay":0.0005,
+    "min_lr": 0,
+    "optimizer": "sgd",
+    "tuned_epoch": 20,
+    "test_class": ["0","1","2","3"]
+}
+

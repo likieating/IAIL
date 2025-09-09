@@ -1,0 +1,48 @@
+
+split1:
+    train_data_path: /data/ssd2/tangshuai/DFIL299/mulu/split_update_11.txt
+    val_data_path: /data/ssd2/tangshuai/DFIL299/mulu/split_update_2.txt
+    test_data_path: /data/ssd2/tangshuai/DFIL299/mulu/split_update_3.txt
+    out_data_path:  /data/ssd2/tangshuai/DFIL299/mulu/split_update_3.txt
+
+#split2:
+#    train_data_path: /data/ssd1/tangshuai/protocol_split2_train/annotations/split2_train.txt
+#    val_data_path: /data/ssd1/tangshuai/protocol_split2_val/annotations/split2_val.txt
+#    test_data_path: /data/ssd1/tangshuai/protocol_split2_test/annotations/split2_test_new.txt
+#    out_data_path: /data/ssd1/tangshuai/protocol_split2_test/annotations/split2_test_out_new.txt
+#
+#split2_local:
+#    train_data_path: data/protocol_split2_train/annotations/split2_train.txt
+#    val_data_path: data/protocol_split2_val/annotations/split2_val.txt
+#    test_data_path: data/protocol_split2_test/annotations/split2_test_new.txt
+#    out_data_path: data/protocol_split2_test/annotations/split2_test_out_new.txt
+#
+#split3:
+#    train_data_path: /data/ssd1/tangshuai/protocol_split3_train/annotations/split3_train.txt
+#    val_data_path: /data/ssd1/tangshuai/protocol_split3_val/annotations/split3_val.txt
+#    test_data_path: /data/ssd1/tangshuai/protocol_split3_test/annotations/split3_test.txt
+#    out_data_path: /data/ssd1/tangshuai/protocol_split2_test/annotations/split2_test_out_new.txt
+#
+#split4:
+#    train_data_path: /data/ssd1/tangshuai/protocol_split4_train/annotations/split4_train.txt
+#    val_data_path: /data/ssd1/tangshuai/protocol_split4_val/annotations/split4_val.txt
+#    test_data_path: /data/ssd1/tangshuai/protocol_split4_test/annotations/split4_test.txt
+#    out_data_path: /data/ssd1/tangshuai/protocol_split2_test/annotations/split2_test_out_new.txt
+#
+#split5:
+#    train_data_path: /data/ssd1/tangshuai/protocol_split5_train/annotations/split5_train.txt
+#    val_data_path: /data/ssd1/tangshuai/protocol_split5_val/annotations/split5_val.txt
+#    test_data_path: /data/ssd1/tangshuai/protocol_split5_test/annotations/split5_test.txt
+#    out_data_path: /data/ssd1/tangshuai/protocol_split2_test/annotations/split2_test_out_new.txt
+#
+#split7:
+#    train_data_path: /data/ssd1/tangshuai/protocol_split7_train/annotations/split7_train.txt
+#    val_data_path: /data/ssd1/tangshuai/protocol_split7_test/annotations/split7_test.txt
+#    test_data_path: /data/ssd1/tangshuai/protocol_split7_test/annotations/split7_test.txt
+#    out_data_path: /data/ssd1/tangshuai/protocol_split7_test/annotations/split7_test.txt
+#
+#split8:
+#    train_data_path: /data/ssd1/tangshuai/protocol_split8_train/annotations/split8_train.txt
+#    val_data_path: /data/ssd1/tangshuai/protocol_split8_val/annotations/split8_val.txt
+#    test_data_path: /data/ssd1/tangshuai/protocol_split8_test/annotations/split8_test.txt
+#    out_data_path: /data/ssd1/tangshuai/protocol_split8_test/annotations/split8_test.txt

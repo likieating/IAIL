@@ -1,0 +1,17 @@
+{
+    "prefix": "reproduce",
+    "dataset": "OSMA",
+    "memory_size": 1000,
+    "memory_per_class": 200,
+    "fixed_memory": false,
+    "shuffle": false,
+    "init_cls": 1,
+    "increment": 1,
+    "model_name": "dfil",
+    "convnet_type": "resnet34",
+    "device": ["3"],
+    "seed": [1993],
+    "resize_size": 224,
+    "test_class": ["0","1","2","3"]
+}
+

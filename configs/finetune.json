@@ -1,0 +1,15 @@
+{
+    "prefix": "reproduce",
+    "dataset": "OSMA",
+    "memory_size": 2000,
+    "memory_per_class": 400,
+    "fixed_memory": false,
+    "shuffle": false,
+    "init_cls": 1,
+    "increment": 1,
+    "model_name": "finetune",
+    "convnet_type": "resnet34",
+    "device": ["0"],
+    "seed": [1993],
+    "resize_size": 256
+}

@@ -1,0 +1,15 @@
+{
+    "prefix": "reproduce",
+    "dataset": "OSMA",
+    "memory_size": 2000,
+    "memory_per_class": 40,
+    "fixed_memory": false,
+    "shuffle": false,
+    "init_cls": 1,
+    "increment": 1,
+    "model_name": "lwf",
+    "convnet_type": "resnet34",
+    "device": ["0"],
+    "seed": [1993],
+    "resize_size": 299
+}
